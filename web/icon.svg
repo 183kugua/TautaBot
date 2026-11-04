@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<defs><linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#8fd8fb"/><stop offset="1" stop-color="#2b8ed6"/>
+</linearGradient></defs>
+<rect width="128" height="128" rx="30" fill="url(#sky)"/>
+<g transform="translate(64,64)" fill="#6fd18c"><path transform="rotate(45) scale(.72)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(135) scale(.72)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(225) scale(.72)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(315) scale(.72)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/></g>
+<circle cx="64" cy="64" r="4.2" fill="#ffd54a"/>
+</svg>

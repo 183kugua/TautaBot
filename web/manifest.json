@@ -1,0 +1,13 @@
+{
+  "name": "tautaBot · 智能体控制台",
+  "short_name": "tautaBot",
+  "description": "极光下的AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f2f7fd",
+  "theme_color": "#2b8ed6",
+  "icons": [
+    { "src": "/static/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/static/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
