@@ -27,7 +27,7 @@ from agent.core.tools import REGISTRY, is_enabled, schemas, set_disabled, set_sc
 from agent.memory.window import Window
 from agent.core import plugins as plugin_loader
 
-VERSION = "0.6.15"
+VERSION = "0.6.16"
 START_TS = time.time()
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -369,6 +369,43 @@ async def chat(body: ChatIn, request: Request):
 
     log.info("chat sid=%s model=%s msg=%.60s", body.session_id,
              model.get("name", "?"), body.message)
+    if body.message.startswith("/"):
+        def command_pump():
+            out = ""
+            try:
+                parts = body.message.strip()[1:].split(None, 1)
+                cname = parts[0] if parts else ""
+                cargs = parts[1] if len(parts) > 1 else ""
+                cmd = plugin_loader.find_command(cname)
+                if cmd:
+                    try:
+                        out = cmd["execute"](cargs)
+                    except Exception as e:  # noqa: BLE001
+                        out = f"命令执行出错：{e}"
+                elif cname in ("", "help"):
+                    cmds = plugin_loader.list_commands()
+                    lines = ["- /help —— 列出全部命令（内置）"]
+                    lines += [f"- /{c['name']} —— {c['description']}（{c['file']}）"
+                              for c in cmds]
+                    out = ("**可用命令**\n\n" + "\n".join(lines)) if len(lines) > 1 \
+                        else "还没有插件注册命令。去「插件」页装一个，或看 plugins/README.md 自己写。"
+                else:
+                    out = f"没有 /{cname} 这个命令。发 /help 看看有什么。"
+                w = get_window(body.session_id)
+                w.add({"role": "user", "content": body.message})
+                w.add({"role": "assistant", "content": out})
+            except Exception as e:  # noqa: BLE001
+                out = f"命令处理出错：{e}"
+                w = get_window(body.session_id)
+                w.add({"role": "user", "content": body.message})
+            finally:
+                for piece in (out[i:i + 400] for i in range(0, len(out), 400)):
+                    yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'assistant_done', 'content': out}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'content': out}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(command_pump(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache"})
+
     cancel = threading.Event()
     _CANCELS[body.session_id] = cancel
     q: "queue.Queue[dict | None]" = queue.Queue()
@@ -580,6 +617,28 @@ def list_plugins():
                                    if t.get("plugin_file") == e["file"]
                                    and t.get("plugin_config_schema")), None)
     return {"plugins": list(out.values()), "errors": _PLUGIN_ERRORS}
+
+
+@app.get("/api/commands")
+def list_commands():
+    return {"commands": plugin_loader.list_commands()}
+
+
+class RouteInvokeIn(BaseModel):
+    file: str
+    route: str
+    params: dict | None = None
+
+
+@app.post("/api/plugins/invoke")
+def invoke_plugin_route(body: RouteInvokeIn):
+    """插件对外提供的能力走统一入口：鉴权与限流天然共用。"""
+    try:
+        return plugin_loader.invoke_route(body.file, body.route, body.params or {})
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"插件路由执行失败：{e}")
 
 
 @app.post("/api/plugins/config")

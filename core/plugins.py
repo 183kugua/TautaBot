@@ -6,6 +6,8 @@
   on_load(ctx) / on_unload()          # 生命周期
   on_message(evt) / on_response(evt)  # 对话事件广播（只读观察）
   INTERVAL = 60 + tick(ctx)           # 定时任务（秒，>=5 才生效）
+  COMMANDS = [{"name","description","execute(text, ctx)"}]  # 斜杠命令：聊天发 /name 触发
+  ROUTES  = [{"path","fn(params, ctx)","methods"}]          # 程序调用口：/api/plugins/invoke
   ctx = {config, data_dir, log}       # 插件配置、数据目录、专用 logger
 """
 from __future__ import annotations
@@ -20,6 +22,8 @@ log = logging.getLogger("tauta.plugins")
 _TICKERS: dict[str, threading.Event] = {}
 _HOOKS: dict[str, dict] = {}
 _LOADED: dict[str, object] = {}
+_COMMANDS: dict[str, list] = {}      # file -> [cmd]
+_ROUTES: dict[str, list] = {}        # file -> [route]
 
 
 def _tool_name(path: str) -> str:
@@ -60,10 +64,8 @@ def _collect_tools(name, mod, file, ctx) -> list[dict]:
                 "mutating": bool(t.get("mutating", getattr(mod, "MUTATING", False))),
                 "fn": run,
             })
-    else:
-        f = getattr(mod, "execute", None)
-        if not callable(f):
-            raise ValueError("缺少 execute(args) 或 TOOLS 列表")
+    elif callable(getattr(mod, "execute", None)):
+        f = getattr(mod, "execute")
         cfg = ctx["config"]
         def run1(args, _f=f, _c=cfg, _two=_takes_cfg(f)):
             return str(_f(args or {}, _c) if _two else _f(args or {}))
@@ -74,6 +76,7 @@ def _collect_tools(name, mod, file, ctx) -> list[dict]:
                                     or {"type": "object", "properties": {}},
                       "mutating": bool(getattr(mod, "MUTATING", False)),
                       "fn": run1})
+    # 既无 TOOLS 也无 execute：纯命令/路由/钩子插件，合法
     for t in tools:
         t.update({"plugin": True, "plugin_file": file})
     return tools
@@ -110,6 +113,8 @@ def load(plugin_dir: str, registry: dict,
             except Exception as e:  # noqa: BLE001
                 log.warning("on_unload %s: %s", file, e)
     _HOOKS.clear()
+    _COMMANDS.clear()
+    _ROUTES.clear()
     for name in [n for n, t in list(registry.items()) if t.get("plugin")]:
         registry.pop(name, None)
 
@@ -135,9 +140,41 @@ def load(plugin_dir: str, registry: dict,
                 registry[t["name"]] = t
             registry.setdefault("__meta__", {})  # 占位防误用
 
-            hooks = {k: f for k in ("on_load", "on_unload", "on_message", "on_response")
+            hooks = {k: getattr(mod, k) for k in ("on_load", "on_unload", "on_message", "on_response")
                      if callable(getattr(mod, k, None))}
             _HOOKS[fn] = hooks
+
+            cmds = []
+            for c in getattr(mod, "COMMANDS", None) or []:
+                f = c.get("execute")
+                if not callable(f):
+                    raise ValueError(f"命令 {c.get('name')} 的 execute 不可调用")
+                two = _takes_cfg(f)
+                cmds.append({
+                    "name": str(c.get("name") or "").lstrip("/"),
+                    "description": (c.get("description") or "").strip(),
+                    "execute": (lambda text, _f=f, _c=ctx["config"], _t=two:
+                                str(_f(text, _c) if _t else _f(text))),
+                    "ctx": ctx,
+                })
+            if cmds:
+                _COMMANDS[fn] = cmds
+
+            rts = []
+            for r in getattr(mod, "ROUTES", None) or []:
+                f = r.get("fn")
+                if not callable(f):
+                    raise ValueError(f"路由 {r.get('path')} 的 fn 不可调用")
+                two = _takes_cfg(f)
+                rts.append({
+                    "path": str(r.get("path") or "").strip("/"),
+                    "methods": [m.upper() for m in (r.get("methods") or ["GET"])],
+                    "fn": (lambda params, _f=f, _c=ctx["config"], _t=two:
+                           (_f(params, _c) if _t else _f(params))),
+                    "ctx": ctx,
+                })
+            if rts:
+                _ROUTES[fn] = rts
             for t in tools:
                 t["plugin_config_schema"] = _config_schema(mod)
             _LOADED[fn] = mod
@@ -187,8 +224,33 @@ def emit(hook: str, payload: dict) -> None:
             log.warning("hook %s@%s: %s", hook, file, e)
 
 
+def find_command(name: str) -> dict | None:
+    for cmds in _COMMANDS.values():
+        for c in cmds:
+            if c["name"] == name:
+                return c
+    return None
+
+
+def list_commands() -> list[dict]:
+    return [{"name": c["name"], "description": c["description"], "file": f}
+            for f, cmds in _COMMANDS.items() for c in cmds]
+
+
+def invoke_route(file: str, route: str, params: dict) -> dict:
+    for r in _ROUTES.get(file, []):
+        if r["path"] == route.strip("/"):
+            if "GET" not in r["methods"] and "POST" not in r["methods"]:
+                raise ValueError("路由方法不可用")
+            out = r["fn"](params or {})
+            return {"ok": True, "result": out if isinstance(out, (dict, list)) else str(out)}
+    raise KeyError(f"插件 {file} 没有 /{route} 路由")
+
+
 def meta(file: str) -> dict:
     return {"hooks": sorted(k for k in _HOOKS.get(file, {}) if k != "on_unload"),
+            "commands": [c["name"] for c in _COMMANDS.get(file, [])],
+            "routes": [r["path"] for r in _ROUTES.get(file, [])],
             "interval": next((int(getattr(m, "INTERVAL", 0) or 0)
                               for f, m in _LOADED.items() if f == file
                               and int(getattr(m, "INTERVAL", 0) or 0) >= 5), 0)}

@@ -915,7 +915,7 @@
         <g transform="translate(12,12)" fill="#6fd18c"><path transform="rotate(45) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(135) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(225) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(315) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/></g>
         <circle cx="12" cy="12" r="0.8" fill="#ffd54a"/>
       </svg>
-      <b class="logoname">tautaBot</b> <em>v0.6.15</em>
+      <b class="logoname">tautaBot</b> <em>v0.6.16</em>
     </div>
     <nav>
       <button data-view="chat" class="on">对话</button>
@@ -987,7 +987,7 @@
         <input type="file" id="imgFile" accept="image/png,image/jpeg,image/webp"
                multiple hidden>
         <div class="attachbar" id="attachBar" hidden></div>
-        <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
+        <textarea id="input" rows="1" placeholder="输入消息，Enter 发送；/ 开头走插件命令"></textarea>
         <button class="send" id="go" type="submit">发送</button>
       </form>
     </section>
@@ -2256,6 +2256,8 @@ async function loadPlugins() {
     const caps = [];
     if ((p.hooks || []).length) caps.push('钩子 ' + p.hooks.join('/'));
     if (p.interval) caps.push('每 ' + p.interval + 's 心跳');
+    if ((p.commands || []).length) caps.push('命令 /' + p.commands.join(' /'));
+    if ((p.routes || []).length) caps.push('路由 ' + p.routes.length + ' 个');
     left.append(nm, el('div', 'dim',
       (p.description || '') + ' · 工具：' + (p.tools || []).join(', ') +
       (caps.length ? ' · ' + caps.join(' · ') : '') +

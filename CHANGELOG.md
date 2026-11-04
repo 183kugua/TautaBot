@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.16 · 传令（2026-11-04）
+
+- 斜杠命令体系：插件声明 COMMANDS，聊天发 /name 直接执行，不调模型；/help 列全部
+- 命令结果走正常流式与历史存档；输入框提示 / 开头走命令
+- 程序调用口：插件声明 ROUTES，经 /api/plugins/invoke 统一鉴权调用
+- 示例插件 demo_commands：/roll、/pick、/echo + invoke 路由
+
 ## 0.6.15 · 温室（2026-11-04）
 
 - 插件配置文件体系：卡片上「配置」按钮直接编辑 JSON，落 config.yaml 的 plugins 段
