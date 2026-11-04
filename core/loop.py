@@ -199,6 +199,8 @@ class Agent:
                    "content": f"历史太长，这次只带了最近的消息（隐去 {self.last_trimmed} 条旧消息）"}
 
         final_text = ""
+        think_all: list[str] = []
+        calls_log: list[dict] = []
         try:
             for step in range(self.max_steps):
                 if stopped():
@@ -222,6 +224,7 @@ class Agent:
                     elif ev["type"] == "retry":
                         yield ev
                     elif ev["type"] == "thinking":
+                        think_all.append(ev["content"])
                         yield ev
                     elif ev["type"] == "usage":
                         self.last_usage = ev["usage"]
@@ -253,7 +256,12 @@ class Agent:
             if images:
                 entry["images"] = list(images)
             self.window.add(entry)
-            self.window.add({"role": "assistant", "content": final_text})
+            a_msg = {"role": "assistant", "content": final_text}
+            if think_all:
+                a_msg["thinking"] = "".join(think_all)
+            if calls_log:
+                a_msg["calls"] = calls_log
+            self.window.add(a_msg)
 
         limit = getattr(self.window, "limit", 20)
         if len(self.window.msgs) >= limit - 2:
@@ -292,6 +300,9 @@ class Agent:
             rec = {"id": job["id"], "name": job["name"], "args": job["args"],
                    "result": out, "ms": int((time.monotonic() - t0) * 1000),
                    "ok": not str(out).startswith("错误")}
+            calls_log.append({"name": rec["name"], "args": rec["args"],
+                              "result": str(rec["result"])[:300],
+                              "ok": rec["ok"]})
             if self.tool_hook:
                 try:
                     self.tool_hook(rec)
@@ -320,6 +331,8 @@ class Agent:
 
         for j in jobs:
             if j["bad"]:
+                calls_log.append({"name": j["name"], "args": j["args"],
+                                  "result": j["bad"], "ok": False})
                 yield {"type": "tool_result", "id": j["id"], "name": j["name"],
                        "result": j["bad"], "ms": 0}
                 outcome = j["bad"]

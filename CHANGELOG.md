@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.14 · 苗圃（2026-11-04）
+
+- 插件独立管理页：清单、启停、删除、粘贴代码安装（语法与结构校验）、失败回显
+- 插件能力对齐 AstrBot：TOOLS 多工具注册、on_load / on_unload 生命周期、
+  on_message / on_response 对话钩子、INTERVAL + tick 定时心跳（启停联动）
+- 插件拿到 ctx：config（config.yaml plugins 段）、data_dir（data/plugin_data/）、专用 log
+- 示例插件 heartbeat：多工具 + 定时器 + 钩子全开；安装框可插入示例骨架
+
+## 0.6.13 · 存档（2026-11-04）
+
+- 历史会话保留过程：assistant 消息落盘时附带 thinking 与本轮全部工具调用（名称、参数、结果、成败）
+- 重开会话原样还原：思考块收起可展开、工具卡片带结果与失败标红
+- 过程字段不计入上下文预算，也不会喂回模型
+
 ## 0.6.12 · 嫁接（2026-11-04）
 
 - 插件体系：`plugins/` 目录下每个 .py 就是一个插件（NAME / DESCRIPTION / PARAMS / MUTATING / execute 约定）

@@ -1,6 +1,7 @@
 """FastAPI 外壳：SSE 流式对话 + 工具列表 + 配置读写 + 可选访问令牌。"""
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -26,7 +27,7 @@ from agent.core.tools import REGISTRY, is_enabled, schemas, set_disabled, set_sc
 from agent.memory.window import Window
 from agent.core import plugins as plugin_loader
 
-VERSION = "0.6.12"
+VERSION = "0.6.14"
 START_TS = time.time()
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -375,10 +376,15 @@ async def chat(body: ChatIn, request: Request):
 
     def work() -> None:
         try:
+            plugin_loader.emit("on_message", {"session": body.session_id,
+                                              "text": body.message})
             for ev in agent.run(body.message, body.images,
                                 should_stop=cancel.is_set):
                 if ev.get("type") == "error":
                     state["failed"] = True
+                if ev.get("type") == "done":
+                    plugin_loader.emit("on_response", {"session": body.session_id,
+                                                       "text": ev.get("content", "")})
                 q.put(ev)
         except Exception as e:  # noqa: BLE001
             state["failed"] = True
@@ -479,6 +485,71 @@ class PluginToggleIn(BaseModel):
     enabled: bool
 
 
+class PluginInstallIn(BaseModel):
+    filename: str
+    code: str
+
+
+class PluginDeleteIn(BaseModel):
+    file: str
+
+
+def _reload_and_report() -> dict:
+    global _PLUGIN_ERRORS
+    loaded, errors = plugin_loader.load(str(PLUGINS_DIR), REGISTRY,
+        {k: (v or {}).get("config") or {} for k, v in (load_config().get("plugins") or {}).items()},
+        str(DATA_DIR),
+        lambda file: any(is_enabled(n) for n, t in REGISTRY.items()
+                         if t.get("plugin_file") == file))
+    _PLUGIN_ERRORS = errors
+    set_disabled(tools_cfg().get("disabled") or [])
+    names = [n for n, t in REGISTRY.items() if t.get("plugin")]
+    return {"ok": True, "loaded": loaded, "errors": errors, "tools": names}
+
+
+@app.post("/api/plugins/install")
+def install_plugin(body: PluginInstallIn):
+    """从代码安装插件：校验文件名与语法，写入 plugins/ 后热加载。"""
+    fname = (body.filename or "").strip().lower()
+    if not re.match(r"^[a-z][a-z0-9_]{0,40}\.py$", fname):
+        raise HTTPException(400, "文件名只能用小写字母/数字/下划线，且以 .py 结尾")
+    code = body.code or ""
+    if len(code) > 100_000:
+        raise HTTPException(400, "插件代码超过 100KB 上限")
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        raise HTTPException(400, f"语法错误：{e.msg}（第 {e.lineno} 行）")
+    has_exec = any(isinstance(n, ast.FunctionDef) and n.name == "execute" for n in tree.body)
+    has_tools = any(isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "TOOLS"
+                    for n in tree.body)
+    if not has_exec and not has_tools:
+        raise HTTPException(400, "缺少 execute(args) 函数或 TOOLS 工具列表")
+    target = PLUGINS_DIR / fname
+    if not str(target).startswith(str(PLUGINS_DIR)):
+        raise HTTPException(400, "路径不合法")
+    target.write_text(code, encoding="utf-8")
+    log.info("plugin installed: %s (%d chars)", fname, len(code))
+    rep = _reload_and_report()
+    rep["file"] = fname
+    return rep
+
+
+@app.post("/api/plugins/delete")
+def delete_plugin(body: PluginDeleteIn):
+    fname = (body.file or "").strip()
+    if not re.match(r"^[a-z][a-z0-9_]{0,40}\.py$", fname):
+        raise HTTPException(400, "文件名不合法")
+    target = PLUGINS_DIR / fname
+    if not str(target).startswith(str(PLUGINS_DIR)) or not target.exists():
+        raise HTTPException(404, "没有这个插件文件")
+    target.unlink()
+    log.info("plugin deleted: %s", fname)
+    rep = _reload_and_report()
+    rep["file"] = fname
+    return rep
+
+
 _PLUGIN_ERRORS: list = []
 
 @app.get("/api/plugins")
@@ -495,13 +566,19 @@ def list_plugins():
             "mutating": t["mutating"], "tools": [],
             "enabled": t["name"] not in disabled})
         e["tools"].append(t["name"])
+    for e in out.values():
+        e.update(plugin_loader.meta(e["file"]))
     return {"plugins": list(out.values()), "errors": _PLUGIN_ERRORS}
 
 
 @app.post("/api/plugins/reload")
 def reload_plugins():
     global _PLUGIN_ERRORS
-    loaded, errors = plugin_loader.load(str(PLUGINS_DIR), REGISTRY)
+    loaded, errors = plugin_loader.load(str(PLUGINS_DIR), REGISTRY,
+        {k: (v or {}).get("config") or {} for k, v in (load_config().get("plugins") or {}).items()},
+        str(DATA_DIR),
+        lambda file: any(is_enabled(n) for n, t in REGISTRY.items()
+                         if t.get("plugin_file") == file))
     _PLUGIN_ERRORS = errors
     t = tools_cfg()
     set_disabled(t.get("disabled") or [])
@@ -527,6 +604,13 @@ def toggle_plugin(body: PluginToggleIn):
     cfg["tools"] = tcfg
     save_config(cfg)
     set_disabled(tcfg["disabled"])
+    plugin_loader.stop_ticker(body.file)
+    if body.enabled:
+        plugin_loader.load(str(PLUGINS_DIR), REGISTRY,
+                           {k: (v or {}).get("config") or {} for k, v in (load_config().get("plugins") or {}).items()},
+                           str(DATA_DIR),
+                           lambda f: any(is_enabled(n) for n, t in REGISTRY.items()
+                                         if t.get("plugin_file") == f))
     return {"ok": True, "enabled": body.enabled, "tools": sorted(names)}
 
 
@@ -1228,7 +1312,11 @@ def health():
 if __name__ == "__main__":
     import uvicorn
 
-    plugin_loader.load(str(PLUGINS_DIR), REGISTRY)
+    plugin_loader.load(str(PLUGINS_DIR), REGISTRY,
+        {k: (v or {}).get("config") or {} for k, v in (load_config().get("plugins") or {}).items()},
+        str(DATA_DIR),
+        lambda file: any(is_enabled(n) for n, t in REGISTRY.items()
+                         if t.get("plugin_file") == file))
     backup_sessions()
 
     cfg = load_config().get("server", {})

@@ -915,12 +915,13 @@
         <g transform="translate(12,12)" fill="#6fd18c"><path transform="rotate(45) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(135) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(225) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(315) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/></g>
         <circle cx="12" cy="12" r="0.8" fill="#ffd54a"/>
       </svg>
-      <b class="logoname">tautaBot</b> <em>v0.6.12</em>
+      <b class="logoname">tautaBot</b> <em>v0.6.14</em>
     </div>
     <nav>
       <button data-view="chat" class="on">对话</button>
       <button data-view="models">模型</button>
       <button data-view="tools">工具</button>
+      <button data-view="plugins">插件</button>
       <button data-view="config">设置</button>
       <button data-view="logs">日志</button>
     </nav>
@@ -1031,15 +1032,8 @@
       <div class="scroll"><div class="inner">
         <div class="searchbar" style="display:flex;gap:10px;align-items:center">
           <input id="toolSearch" placeholder="按名称或用途筛选工具">
-          <button class="btn" id="pluginReload" title="重新扫描 plugins/ 目录" style="flex:none">重载插件</button>
         </div>
         <p class="lead" id="toolsLead" style="max-width:620px">工具都从注册表现读现卖。带「写」标记的会动文件或对外发请求，只读模式下会被拦住。</p>
-        <div class="group" id="pluginGroup" hidden>
-          <h2>插件</h2>
-          <p class="hint">plugins/ 目录里每个 .py 就是一个插件（NAME / DESCRIPTION / PARAMS / MUTATING / execute）。改完点上面的「重载插件」热生效；停用会写进配置，重启也记得。</p>
-          <div id="pluginList"></div>
-          <div id="pluginErrs" hidden></div>
-        </div>
         <table class="tbl">
           <thead><tr>
             <th style="width:30%">名称</th><th style="width:38%">用途</th><th>参数</th>
@@ -1073,7 +1067,36 @@
       </div>
     </section>
 
-    <section id="view-config" class="view">
+        <section id="view-plugins" class="view">
+      <div class="scroll"><div class="inner">
+        <div class="searchbar" style="display:flex;gap:10px;align-items:center">
+          <span style="font-size:13px;color:var(--ink-3);flex:1">plugins/ 目录里每个 .py 就是一个插件，改完重载即热生效。</span>
+          <button class="btn" id="pluginReload2" style="flex:none">重载插件</button>
+        </div>
+
+        <div class="group">
+          <h2>安装新插件</h2>
+          <div class="provadd">
+            <input id="np_file" placeholder="文件名，如 weather.py">
+          </div>
+          <div class="field"><textarea id="np_code" rows="9" placeholder="粘贴插件代码：NAME / DESCRIPTION / PARAMS / MUTATING / execute(args)"></textarea></div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn pri" id="npInstall">安装并加载</button>
+            <button class="btn" id="npDemo" type="button" title="填一份可跑的骨架">插入示例骨架</button>
+            <span id="npState" class="logstate"></span>
+          </div>
+        </div>
+
+        <div class="group">
+          <h2>已装插件</h2>
+          <div id="plugList"></div>
+          <div id="plugErrs" hidden></div>
+          <div class="empty" id="plugEmpty" hidden>还没有插件。上面的框里贴代码，或自己往 plugins/ 目录丢 .py 文件。</div>
+        </div>
+      </div></div>
+    </section>
+
+<section id="view-config" class="view">
       <div class="scroll"><div class="inner">
         <div class="group">
           <h2>外观</h2>
@@ -1267,7 +1290,7 @@ function hideTyping() {
 }
 
 // ---------- 视图 ----------
-const TITLES = {chat:'对话', models:'模型', tools:'工具', config:'设置', logs:'日志'};
+const TITLES = {chat:'对话', models:'模型', tools:'工具', plugins:'插件', config:'设置', logs:'日志'};
 document.querySelectorAll('nav button').forEach(b => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
@@ -1275,7 +1298,8 @@ document.querySelectorAll('nav button').forEach(b => {
       v.classList.toggle('on', v.id === 'view-' + b.dataset.view));
     $('#viewTitle').textContent = TITLES[b.dataset.view];
     if (b.dataset.view === 'models') loadModels();
-    if (b.dataset.view === 'tools') { loadTools(); loadToolLogs(); loadPlugins(); }
+    if (b.dataset.view === 'tools') { loadTools(); loadToolLogs(); }
+  if (b.dataset.view === 'plugins') loadPlugins();
     if (b.dataset.view === 'config') { loadConfig(); loadStats(); loadStatus(); }
     if (b.dataset.view === 'logs') startLogStream();
     else stopLogStream();
@@ -1726,8 +1750,24 @@ async function loadHistory() {
       log.append(w);
     }
 
-    messages.forEach(m => addMsg(
-      m.role === 'user' ? 'user' : 'agent', m.content || '', m.images || []));
+    messages.forEach(m => {
+      if (m.role !== 'user') {
+        if (m.thinking) {
+          const tb = addThink();
+          tb.body.textContent = m.thinking;
+          tb.box.classList.remove('open');
+          tb.tt.textContent = '思考 · ' + m.thinking.length + ' 字';
+          tb.done = true;
+        }
+        (m.calls || []).forEach(c => {
+          const cc = addCall(c.name, c.args);
+          cc.st.textContent = c.ok === false ? '失败' : '完成';
+          cc.box.classList.toggle('fail', c.ok === false);
+          cc.pre.textContent = c.result || '（无输出）';
+        });
+      }
+      addMsg(m.role === 'user' ? 'user' : 'agent', m.content || '', m.images || []);
+    });
     if (messages.length) {
       addMsg('notice', messages.length > 1
         ? `这是之前聊的 ${messages.length} 条记录，接着往下说就行。`
@@ -2194,10 +2234,10 @@ async function loadToolLogs() {
 }
 
 async function loadPlugins() {
-  const g = $('#pluginGroup'), box = $('#pluginList'), errs = $('#pluginErrs');
+  const box = $('#plugList'), errs = $('#plugErrs'), empty = $('#plugEmpty');
   let d = null;
   try { d = await (await api('/api/plugins')).json(); }
-  catch (e) { g.hidden = true; return; }
+  catch (e) { return; }
   const ps = d.plugins || [];
   box.innerHTML = ''; errs.innerHTML = '';
   (d.errors || []).forEach(x => {
@@ -2206,15 +2246,19 @@ async function loadPlugins() {
     errs.append(r);
   });
   errs.hidden = !(d.errors || []).length;
-  g.hidden = ps.length === 0 && errs.hidden;
+  empty.hidden = !!ps.length;
   ps.forEach(p => {
     const row = el('div', 'pmrow');
     const left = el('span', 'mn', '');
     left.style.whiteSpace = 'normal';
     const nm = el('b', null, p.name);
     nm.style.fontFamily = 'var(--mono)';
+    const caps = [];
+    if ((p.hooks || []).length) caps.push('钩子 ' + p.hooks.join('/'));
+    if (p.interval) caps.push('每 ' + p.interval + 's 心跳');
     left.append(nm, el('div', 'dim',
       (p.description || '') + ' · 工具：' + (p.tools || []).join(', ') +
+      (caps.length ? ' · ' + caps.join(' · ') : '') +
       (p.mutating ? ' · 会改东西' : '')));
     row.append(left);
     const sw = el('button', 'btn' + (p.enabled ? ' pri' : ''),
@@ -2229,11 +2273,23 @@ async function loadPlugins() {
       loadPlugins(); loadTools();
     };
     row.append(sw);
+    const del = el('button', 'btn', '删除');
+    del.onclick = async () => {
+      if (!confirm('删除插件 ' + p.file + '？文件会从 plugins/ 目录移除。')) return;
+      try {
+        await api('/api/plugins/delete', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({file: p.file})});
+        loadPlugins(); loadTools();
+      } catch (e) { errs.hidden = false;
+        errs.append(el('div', 'pmrow', '⚠ 删除失败：' + e.message)); }
+    };
+    row.append(del);
     box.append(row);
   });
 }
 
-$('#pluginReload').onclick = async function () {
+$('#pluginReload2').onclick = async function () {
   const btn = this, old = btn.textContent;
   btn.disabled = true; btn.textContent = '重扫中…';
   try {
@@ -2243,11 +2299,32 @@ $('#pluginReload').onclick = async function () {
         d.errors.map(x => x.file).join('、'));
     else
       addMsg('notice', '插件重载完成，共 ' + (d.tools || []).length + ' 个插件工具。');
-  } catch (e) {
-    addMsg('error', '重载失败：' + e.message);
-  }
+  } catch (e) { addMsg('error', '重载失败：' + e.message); }
   btn.disabled = false; btn.textContent = old;
-  loadTools();
+  loadPlugins(); loadTools();
+};
+
+$('#npDemo').onclick = () => {
+  $('#np_file').value = 'my_plugin.py';
+  $('#np_code').value = 'DESCRIPTION = "我的第一个 tautaBot 插件"\n# PARAMS = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}\n# MUTATING = False\n# INTERVAL = 60          # 需要 tick() 定时任务时打开\n# def on_message(evt): ...\n# def on_response(evt): ...\n\ndef execute(args, ctx):\n    """ctx 里有 config / data_dir / log。"""\n    ctx["log"].info("called with %s", args)\n    return "插件跑通了！args=" + repr(args)\n';
+};
+
+$('#npInstall').onclick = async function () {
+  const fname = $('#np_file').value.trim(), code = $('#np_code').value;
+  const st = $('#npState');
+  if (!fname || !code) { st.textContent = '文件名和代码都要有。'; return; }
+  this.disabled = true; st.textContent = '校验并安装中…';
+  try {
+    const r = await api('/api/plugins/install', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: fname, code: code})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || ('HTTP ' + r.status));
+    st.textContent = '装好了，' + ((d.loaded || []).join(', ') || fname) + ' 已加载。';
+    $('#np_code').value = ''; $('#np_file').value = '';
+    loadPlugins(); loadTools();
+  } catch (e) { st.textContent = '失败：' + e.message; }
+  this.disabled = false;
 };
 
 // ---------- 工具调试器 ----------
