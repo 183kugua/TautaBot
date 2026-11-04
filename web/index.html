@@ -915,7 +915,7 @@
         <g transform="translate(12,12)" fill="#6fd18c"><path transform="rotate(45) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(135) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(225) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(315) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/></g>
         <circle cx="12" cy="12" r="0.8" fill="#ffd54a"/>
       </svg>
-      <b class="logoname">tautaBot</b> <em>v0.6.14</em>
+      <b class="logoname">tautaBot</b> <em>v0.6.15</em>
     </div>
     <nav>
       <button data-view="chat" class="on">对话</button>
@@ -2261,6 +2261,39 @@ async function loadPlugins() {
       (caps.length ? ' · ' + caps.join(' · ') : '') +
       (p.mutating ? ' · 会改东西' : '')));
     row.append(left);
+    const cfgBtn = el('button', 'btn', '配置');
+    cfgBtn.onclick = e => {
+      e.stopPropagation();
+      const next = row.nextElementSibling;
+      if (next && next.classList.contains('cfg-row')) { next.remove(); return; }
+      const erow = el('div', 'pmrow cfg-row');
+      erow.style.flexWrap = 'wrap';
+      const ta = el('textarea');
+      ta.style.cssText = 'flex-basis:100%;width:100%;min-height:90px;font:12px/1.6 var(--mono);' +
+        'border:1px solid var(--line);border-radius:8px;padding:8px;color:var(--ink);background:var(--panel)';
+      ta.value = JSON.stringify(p.config || {}, null, 2);
+      const hint = el('span', 'dim', p.config_schema
+        ? '字段约定：' + JSON.stringify(p.config_schema)
+        : '自由 JSON，保存后 ctx.config 立即拿到新值');
+      hint.style.cssText = 'flex-basis:100%;font-size:11px;color:var(--ink-3)';
+      const save = el('button', 'btn pri', '保存配置');
+      save.onclick = async () => {
+        let obj;
+        try { obj = JSON.parse(ta.value || '{}'); }
+        catch (err) { hint.textContent = 'JSON 写错了：' + err.message; return; }
+        save.disabled = true;
+        try {
+          await api('/api/plugins/config', {method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({file: p.file, config: obj})});
+          hint.textContent = '已保存并热重载 ✓';
+        } catch (err) { hint.textContent = '保存失败：' + err.message; }
+        save.disabled = false;
+      };
+      erow.append(ta, hint, save);
+      row.after(erow);
+    };
+    row.append(cfgBtn);
     const sw = el('button', 'btn' + (p.enabled ? ' pri' : ''),
       p.enabled ? '已启用' : '已停用');
     sw.onclick = async () => {

@@ -79,6 +79,12 @@ def _collect_tools(name, mod, file, ctx) -> list[dict]:
     return tools
 
 
+def _config_schema(mod):
+    """插件可声明 CONFIG_SCHEMA（JSON Schema），管理页据此渲染提示。"""
+    sch = getattr(mod, "CONFIG_SCHEMA", None)
+    return sch if isinstance(sch, dict) else None
+
+
 def stop_ticker(file: str) -> None:
     ev = _TICKERS.pop(file, None)
     if ev:
@@ -127,10 +133,13 @@ def load(plugin_dir: str, registry: dict,
                 raise ValueError(f"与内置工具重名：{', '.join(taken)}，已让位")
             for t in tools:
                 registry[t["name"]] = t
+            registry.setdefault("__meta__", {})  # 占位防误用
 
             hooks = {k: f for k in ("on_load", "on_unload", "on_message", "on_response")
                      if callable(getattr(mod, k, None))}
             _HOOKS[fn] = hooks
+            for t in tools:
+                t["plugin_config_schema"] = _config_schema(mod)
             _LOADED[fn] = mod
             f = hooks.get("on_load")
             if f:

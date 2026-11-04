@@ -27,7 +27,7 @@ from agent.core.tools import REGISTRY, is_enabled, schemas, set_disabled, set_sc
 from agent.memory.window import Window
 from agent.core import plugins as plugin_loader
 
-VERSION = "0.6.14"
+VERSION = "0.6.15"
 START_TS = time.time()
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -494,6 +494,11 @@ class PluginDeleteIn(BaseModel):
     file: str
 
 
+class PluginConfigIn(BaseModel):
+    file: str
+    config: dict
+
+
 def _reload_and_report() -> dict:
     global _PLUGIN_ERRORS
     loaded, errors = plugin_loader.load(str(PLUGINS_DIR), REGISTRY,
@@ -568,7 +573,31 @@ def list_plugins():
         e["tools"].append(t["name"])
     for e in out.values():
         e.update(plugin_loader.meta(e["file"]))
+        pcfg = (load_config().get("plugins") or {}).get(e["file"], {}).get("config")
+        e["config"] = pcfg or {}
+        e["config_schema"] = next((t.get("plugin_config_schema")
+                                   for t in REGISTRY.values()
+                                   if t.get("plugin_file") == e["file"]
+                                   and t.get("plugin_config_schema")), None)
     return {"plugins": list(out.values()), "errors": _PLUGIN_ERRORS}
+
+
+@app.post("/api/plugins/config")
+def save_plugin_config(body: PluginConfigIn):
+    """保存插件配置到 config.yaml 的 plugins 段，然后热重载让 ctx.config 生效。"""
+    fname = (body.file or "").strip()
+    if fname not in {t.get("plugin_file") for t in REGISTRY.values() if t.get("plugin")}:
+        raise HTTPException(404, "没有这个插件")
+    cfg = load_config()
+    plugs = cfg.get("plugins") or {}
+    plugs[fname] = {"config": body.config or {}}
+    cfg["plugins"] = plugs
+    save_config(cfg)
+    log.info("plugin config saved: %s keys=%s", fname, list(body.config or {}))
+    rep = _reload_and_report()
+    rep["file"] = fname
+    rep["config"] = body.config or {}
+    return rep
 
 
 @app.post("/api/plugins/reload")
