@@ -1,0 +1,4 @@
+name: wordcount
+version: "1.0"
+author: "tautaBot"
+description: "统计一段文本的字符数、词数与行数"

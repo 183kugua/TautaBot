@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.17 · 抽屉（2026-11-04）
+
+- 插件升级为目录包：metadata.yaml（信息）/ main.py（代码）/ config.yaml（自己的配置）/ requirements.txt（依赖）分门别类
+- 配置读写分流：目录包写包内 config.yaml，单文件仍走全局 plugins 段；旧单文件完全兼容
+- 「插件」页显示版本、作者、形态徽标；requirements 一键 pip 安装
+- 支持上传 .zip 安装（自动校验 main.py/metadata.yaml 与路径安全，防 zip slip）
+
 ## 0.6.16 · 传令（2026-11-04）
 
 - 斜杠命令体系：插件声明 COMMANDS，聊天发 /name 直接执行，不调模型；/help 列全部

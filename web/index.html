@@ -224,6 +224,7 @@
     border:1px solid var(--line);border-radius:10px;margin-bottom:8px;font-size:13.5px;
     background:var(--panel)}
   .pmrow:hover{border-color:#9ccff0}
+  .pmrow .mn div{white-space:normal;line-height:1.55}
   .pmrow .mn{font-family:var(--mono);font-size:12.5px;flex:1;min-width:0;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pmrow .btn{padding:5px 12px;font-size:12px;border-radius:8px}
@@ -915,7 +916,7 @@
         <g transform="translate(12,12)" fill="#6fd18c"><path transform="rotate(45) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(135) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(225) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(315) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/></g>
         <circle cx="12" cy="12" r="0.8" fill="#ffd54a"/>
       </svg>
-      <b class="logoname">tautaBot</b> <em>v0.6.16</em>
+      <b class="logoname">tautaBot</b> <em>v0.6.17</em>
     </div>
     <nav>
       <button data-view="chat" class="on">对话</button>
@@ -1083,6 +1084,8 @@
           <div style="display:flex;gap:10px;align-items:center">
             <button class="btn pri" id="npInstall">安装并加载</button>
             <button class="btn" id="npDemo" type="button" title="填一份可跑的骨架">插入示例骨架</button>
+            <button class="btn" id="npZipBtn" type="button">上传 .zip 安装</button>
+            <input type="file" id="npZip" accept=".zip" hidden>
             <span id="npState" class="logstate"></span>
           </div>
         </div>
@@ -2254,15 +2257,34 @@ async function loadPlugins() {
     const nm = el('b', null, p.name);
     nm.style.fontFamily = 'var(--mono)';
     const caps = [];
+    if (p.version) caps.push('v' + p.version + (p.author ? ' · ' + p.author : ''));
+    caps.push(p.kind === 'package' ? '目录包' : '单文件');
     if ((p.hooks || []).length) caps.push('钩子 ' + p.hooks.join('/'));
     if (p.interval) caps.push('每 ' + p.interval + 's 心跳');
     if ((p.commands || []).length) caps.push('命令 /' + p.commands.join(' /'));
     if ((p.routes || []).length) caps.push('路由 ' + p.routes.length + ' 个');
     left.append(nm, el('div', 'dim',
-      (p.description || '') + ' · 工具：' + (p.tools || []).join(', ') +
-      (caps.length ? ' · ' + caps.join(' · ') : '') +
-      (p.mutating ? ' · 会改东西' : '')));
+      (p.description || '') + '\n工具：' + (p.tools || []).join(', ') +
+      (caps.length ? '\n' + caps.join(' · ') : '') +
+      (p.mutating ? '\n会改东西' : '')));
     row.append(left);
+    if ((p.requires || []).length) {
+      const dep = el('button', 'btn', '装依赖');
+      dep.title = 'pip install -r ' + p.file + '/requirements.txt（' + p.requires.join(', ') + '）';
+      dep.onclick = async e => {
+        e.stopPropagation();
+        dep.disabled = true; dep.textContent = '安装中…';
+        try {
+          const r = await api('/api/plugins/deps', {method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({file: p.file})});
+          const d = await r.json();
+          dep.textContent = d.ok ? '依赖已装 ✓' : '装失败，看日志';
+        } catch (err) { dep.textContent = '装失败'; }
+        dep.disabled = false;
+      };
+      row.append(dep);
+    }
     const cfgBtn = el('button', 'btn', '配置');
     cfgBtn.onclick = e => {
       e.stopPropagation();
@@ -2342,6 +2364,31 @@ $('#pluginReload2').onclick = async function () {
 $('#npDemo').onclick = () => {
   $('#np_file').value = 'my_plugin.py';
   $('#np_code').value = 'DESCRIPTION = "我的第一个 tautaBot 插件"\n# PARAMS = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}\n# MUTATING = False\n# INTERVAL = 60          # 需要 tick() 定时任务时打开\n# def on_message(evt): ...\n# def on_response(evt): ...\n\ndef execute(args, ctx):\n    """ctx 里有 config / data_dir / log。"""\n    ctx["log"].info("called with %s", args)\n    return "插件跑通了！args=" + repr(args)\n';
+};
+
+$('#npZipBtn').onclick = () => $('#npZip').click();
+$('#npZip').onchange = async function () {
+  const f = this.files[0];
+  this.value = '';
+  if (!f) return;
+  const st = $('#npState');
+  if (!f.name.toLowerCase().endsWith('.zip')) { st.textContent = '请选 .zip 文件'; return; }
+  st.textContent = '打包上传中…';
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = () => rej(new Error('读文件失败'));
+      r.readAsDataURL(f);
+    });
+    const r = await api('/api/plugins/install_zip', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: f.name, b64: b64})});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || ('HTTP ' + r.status));
+    st.textContent = '装好了：' + (d.file || f.name) + '（' + ((d.loaded || []).length) + ' 个工具已加载）';
+    loadPlugins(); loadTools();
+  } catch (e) { st.textContent = '失败：' + e.message; }
 };
 
 $('#npInstall').onclick = async function () {

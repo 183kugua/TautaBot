@@ -1,0 +1,4 @@
+name: heartbeat
+version: "1.1"
+author: "tautaBot"
+description: "心跳演示：定时器 + 多工具 + 对话钩子"

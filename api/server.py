@@ -9,6 +9,7 @@ import os
 import shutil
 import queue
 import re
+import sys
 import threading
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from agent.core.tools import REGISTRY, is_enabled, schemas, set_disabled, set_sc
 from agent.memory.window import Window
 from agent.core import plugins as plugin_loader
 
-VERSION = "0.6.16"
+VERSION = "0.6.17"
 START_TS = time.time()
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -643,19 +644,91 @@ def invoke_plugin_route(body: RouteInvokeIn):
 
 @app.post("/api/plugins/config")
 def save_plugin_config(body: PluginConfigIn):
-    """保存插件配置到 config.yaml 的 plugins 段，然后热重载让 ctx.config 生效。"""
+    """保存插件配置：目录包写包内 config.yaml，单文件写全局 plugins 段。"""
     fname = (body.file or "").strip()
     if fname not in {t.get("plugin_file") for t in REGISTRY.values() if t.get("plugin")}:
         raise HTTPException(404, "没有这个插件")
-    cfg = load_config()
-    plugs = cfg.get("plugins") or {}
-    plugs[fname] = {"config": body.config or {}}
-    cfg["plugins"] = plugs
-    save_config(cfg)
+    pkg_cfg = PLUGINS_DIR / fname / "config.yaml"
+    if pkg_cfg.exists() or (PLUGINS_DIR / fname / "main.py").exists():
+        yaml.safe_dump(body.config or {}, open(pkg_cfg, "w", encoding="utf-8"),
+                       allow_unicode=True, sort_keys=False)
+        where = str(pkg_cfg)
+    else:
+        cfg = load_config()
+        plugs = cfg.get("plugins") or {}
+        plugs[fname] = {"config": body.config or {}}
+        cfg["plugins"] = plugs
+        save_config(cfg)
+        where = "config.yaml (plugins 段)"
     log.info("plugin config saved: %s keys=%s", fname, list(body.config or {}))
     rep = _reload_and_report()
     rep["file"] = fname
     rep["config"] = body.config or {}
+    rep["where"] = where
+    return rep
+
+
+class PluginDepsIn(BaseModel):
+    file: str
+
+
+@app.post("/api/plugins/deps")
+def install_plugin_deps(body: PluginDepsIn):
+    """安装目录包 requirements.txt 里声明的依赖（pip，60 秒超时）。"""
+    req = PLUGINS_DIR / body.file / "requirements.txt"
+    if not req.exists():
+        raise HTTPException(404, "这个插件没有 requirements.txt")
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req)],
+                       capture_output=True, text=True, timeout=60)
+    out = (r.stdout + r.stderr)[-1500:]
+    log.info("plugin deps install rc=%s: %s", r.returncode, body.file)
+    return {"ok": r.returncode == 0, "output": out}
+
+
+class PluginZipIn(BaseModel):
+    filename: str
+    b64: str
+
+
+@app.post("/api/plugins/install_zip")
+def install_plugin_zip(body: PluginZipIn):
+    """上传 zip 安装插件：包内需含 main.py 与 metadata.yaml（允许一层目录包裹）。"""
+    import base64, io, zipfile
+    name = re.sub(r"[^a-z0-9_]", "_", (body.filename or "plugin.zip")[:-4].lower())
+    if not name or len(name) > 40:
+        raise HTTPException(400, "zip 文件名不合法")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(base64.b64decode(body.b64)))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"zip 解不开：{e}")
+    names = zf.namelist()
+    if len(names) > 200 or any(len(n) > 240 for n in names):
+        raise HTTPException(400, "zip 条目过多")
+    root = ""
+    if all(n.split("/")[0] in ("main.py", "metadata.yaml") or "/" in n for n in names if n):
+        pass
+    mains = [n for n in names if n.endswith("main.py")]
+    if not mains:
+        raise HTTPException(400, "zip 里没有 main.py")
+    prefix = mains[0][:-len("main.py")]
+    if any(not n.startswith(prefix) for n in names if n):
+        raise HTTPException(400, "zip 结构不统一：main.py 必须与其它文件同层")
+    if f"{prefix}metadata.yaml" not in names:
+        raise HTTPException(400, "zip 里没有 metadata.yaml")
+    dest = PLUGINS_DIR / name
+    dest.mkdir(parents=True, exist_ok=True)
+    for n in names:
+        if not n.startswith(prefix) or n.endswith("/"):
+            continue
+        rel = n[len(prefix):]
+        target = (dest / rel).resolve()
+        if not str(target).startswith(str(dest.resolve())):
+            raise HTTPException(400, "zip 里有越界路径，拒绝安装")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(zf.read(n))          # 手动剥前缀解压，防包套包
+    log.info("plugin zip installed: %s (%d files)", name, len(names))
+    rep = _reload_and_report()
+    rep["file"] = name
     return rep
 
 

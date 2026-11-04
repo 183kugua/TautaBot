@@ -1,0 +1,4 @@
+name: dice
+version: "1.0"
+author: "tautaBot"
+description: "掷骰子：roll(sides, times)，返回一组随机点数"

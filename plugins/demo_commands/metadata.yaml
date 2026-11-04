@@ -1,0 +1,4 @@
+name: demo_commands
+version: "1.0"
+author: "tautaBot"
+description: "演示插件：斜杠命令 /roll /pick /echo + 程序路由"

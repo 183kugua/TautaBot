@@ -37,5 +37,3 @@ ROUTES = [
 ]
 
 
-def on_message(evt):
-    pass
