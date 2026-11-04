@@ -42,8 +42,10 @@ cp .env.example .env      # 填 AGENT_API_KEY 和 AGENT_ACCESS_TOKEN
 - 模型页直接切换，不用改配置文件
 
 **插件**
-- `plugins/` 目录即插即用：NAME / DESCRIPTION / PARAMS / MUTATING / execute 五件套约定
-- 热重载、单工具开关、只读拦截、失败隔离，工具页带「插件」标识
+- 目录包形态：metadata.yaml（信息）/ main.py（代码）/ config.yaml（配置）/ requirements.txt（依赖）分门别类，旧单文件兼容
+- AstrBot 级能力：TOOLS 多工具、COMMANDS 斜杠命令（/name 直达不调模型）、ROUTES 程序调用口、on_load/on_unload/on_message/on_response 钩子、INTERVAL+tick 定时、CONFIG_SCHEMA 配置提示、ctx（config/data_dir/log）
+- 插件管理页：清单、启停、删除、粘贴代码安装、zip 上传安装、模板一键安装、配置可视化编辑、失败回显
+- 热重载、失败隔离、只读拦截、超时与单工具开关全适用
 
 **工具**
 - `@tool` 装饰器注册，自动导出 JSON Schema
@@ -66,7 +68,8 @@ cp .env.example .env      # 填 AGENT_API_KEY 和 AGENT_ACCESS_TOKEN
 
 **运维**
 - 实时日志：网页「日志」视图 SSE 推送，ERROR/WARNING 分色，断线自动重连
-- 启动自动备份会话数据到 `data/backups/`，保留 5 份
+- 启动自动备份会话数据到 `data/backups/`，保留 5 份；设置页一键恢复
+- 长会话分页渲染（默认最近 50 条，按需加载更早）
 - 按天统计调用次数与 token（`/api/stats`）
 - 运行状态：已运行时长、内存、会话数（`/api/status`）
 - 会话导出 Markdown / JSON / HTML，压缩前原文自动归档

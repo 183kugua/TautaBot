@@ -81,7 +81,7 @@ def _collect_tools(name, mod, file, ctx) -> list[dict]:
             f = t.get("execute")
             if not callable(f):
                 raise ValueError(f"TOOLS[{i}].execute 不可调用")
-            cfg = ctx["config"]
+            cfg = ctx
 
             def run(args=None, _f=f, _c=cfg, _two=_takes_cfg(f), **kw):
                 if args is None and kw:
@@ -97,7 +97,7 @@ def _collect_tools(name, mod, file, ctx) -> list[dict]:
             })
     elif callable(getattr(mod, "execute", None)):
         f = getattr(mod, "execute")
-        cfg = ctx["config"]
+        cfg = ctx
 
         def run1(args=None, _f=f, _c=cfg, _two=_takes_cfg(f), **kw):
             if args is None and kw:
@@ -130,7 +130,7 @@ def _collect_extras(name, mod, file, ctx, tools) -> None:
         cmds.append({
             "name": str(c.get("name") or "").lstrip("/"),
             "description": (c.get("description") or "").strip(),
-            "execute": (lambda text, _f=f, _c=ctx["config"], _t=two:
+            "execute": (lambda text, _f=f, _c=ctx, _t=two:
                         str(_f(text, _c) if _t else _f(text))),
         })
     if cmds:
@@ -145,7 +145,7 @@ def _collect_extras(name, mod, file, ctx, tools) -> None:
         rts.append({
             "path": str(r.get("path") or "").strip("/"),
             "methods": [m.upper() for m in (r.get("methods") or ["GET"])],
-            "fn": (lambda params, _f=f, _c=ctx["config"], _t=two:
+            "fn": (lambda params, _f=f, _c=ctx, _t=two:
                    (_f(params, _c) if _t else _f(params))),
         })
     if rts:

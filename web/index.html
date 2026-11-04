@@ -373,6 +373,15 @@
   .think-b{display:none;padding:10px 14px;white-space:pre-wrap;word-break:break-word;
            color:var(--ink-2);max-height:260px;overflow:auto;line-height:1.7}
   .think.open .think-b{display:block}
+  #cmdMenu{position:absolute;bottom:100%;left:12px;right:auto;z-index:30;background:#fff;
+    border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 28px rgba(22,32,43,.16);
+    max-height:240px;overflow:auto;min-width:280px;margin-bottom:8px}
+  #cmdMenu .cmrow{display:flex;gap:10px;padding:8px 14px;cursor:pointer;font-size:13.5px;
+    align-items:baseline}
+  #cmdMenu .cmrow:hover{background:var(--panel-2)}
+  #cmdMenu .cmn{font-family:var(--mono);color:var(--sky-d);font-weight:600;white-space:nowrap}
+  #cmdMenu .cmd{color:var(--ink-3);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
   #findBar{position:fixed;top:70px;left:50%;transform:translateX(-50%);z-index:40;
     display:flex;gap:8px;align-items:center;background:#fff;border:1px solid var(--line);
     border-radius:99px;padding:7px 9px 7px 16px;box-shadow:0 10px 28px rgba(22,32,43,.16)}
@@ -456,6 +465,7 @@
   .pickbtn:hover{color:var(--accent);transform:translateY(-1px)}
   .pickbtn.has{color:var(--accent)}
 
+  #send{position:relative}
   .attachbar{
     position:absolute;left:32px;bottom:78px;display:flex;gap:8px;
     padding:8px;border-radius:14px;background:var(--panel);
@@ -916,7 +926,7 @@
         <g transform="translate(12,12)" fill="#6fd18c"><path transform="rotate(45) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(135) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(225) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/><path transform="rotate(315) scale(.137)" d="M0 0C-13-20-28-28-28-45c0-15 15-21 28-8 13-13 28-7 28 8 0 17-15 25-28 45z"/></g>
         <circle cx="12" cy="12" r="0.8" fill="#ffd54a"/>
       </svg>
-      <b class="logoname">tautaBot</b> <em>v0.6.17</em>
+      <b class="logoname">tautaBot</b> <em>v0.6.19</em>
     </div>
     <nav>
       <button data-view="chat" class="on">对话</button>
@@ -988,6 +998,7 @@
         <input type="file" id="imgFile" accept="image/png,image/jpeg,image/webp"
                multiple hidden>
         <div class="attachbar" id="attachBar" hidden></div>
+      <div id="cmdMenu" hidden></div>
         <textarea id="input" rows="1" placeholder="输入消息，Enter 发送；/ 开头走插件命令"></textarea>
         <button class="send" id="go" type="submit">发送</button>
       </form>
@@ -1090,6 +1101,12 @@
           </div>
         </div>
 
+        <div class="group" id="tplGroup" hidden>
+          <h2>模板 · 一键安装</h2>
+          <p class="hint">官方模板装完即用，装完自动热加载。</p>
+          <div id="tplList"></div>
+        </div>
+
         <div class="group">
           <h2>已装插件</h2>
           <div id="plugList"></div>
@@ -1105,6 +1122,12 @@
           <h2>外观</h2>
           <div class="themes" id="themeBar"></div>
           <p class="hint">换一身配色，下次打开还是这身。</p>
+        </div>
+
+        <div class="group">
+          <h2>备份与恢复</h2>
+          <p class="hint">每次重启自动备份会话数据，保留最近 5 份。恢复会用备份里的同名会话覆盖现在的。</p>
+          <div id="backupList"></div>
         </div>
 
         <div class="group">
@@ -1262,6 +1285,7 @@ if (_u.searchParams.get('token')) {
   history.replaceState(null, '', _u.pathname);
 }
 const TOKEN = localStorage.getItem('agent_token') || '';
+let CMD_CACHE = null;
 
 async function api(path, init = {}) {
   const r = await fetch(path, {
@@ -1302,8 +1326,8 @@ document.querySelectorAll('nav button').forEach(b => {
     $('#viewTitle').textContent = TITLES[b.dataset.view];
     if (b.dataset.view === 'models') loadModels();
     if (b.dataset.view === 'tools') { loadTools(); loadToolLogs(); }
-  if (b.dataset.view === 'plugins') loadPlugins();
-    if (b.dataset.view === 'config') { loadConfig(); loadStats(); loadStatus(); }
+  if (b.dataset.view === 'plugins') { loadPlugins(); loadTemplates(); }
+    if (b.dataset.view === 'config') { loadConfig(); loadStats(); loadStatus(); loadBackups(); }
     if (b.dataset.view === 'logs') startLogStream();
     else stopLogStream();
   };
@@ -1713,7 +1737,39 @@ $('#input').addEventListener('keydown', e => {
 $('#input').addEventListener('input', e => {
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
+  updateCmdMenu();
 });
+$('#input').addEventListener('keydown', e => {
+  if ($('#cmdMenu') && !$('#cmdMenu').hidden && (e.key === 'Escape')) {
+    $('#cmdMenu').hidden = true;
+  }
+});
+
+async function updateCmdMenu() {
+  const menu = $('#cmdMenu'), v = $('#input').value;
+  if (!v.startsWith('/') || v.includes('\n') || v.includes(' ')) { menu.hidden = true; return; }
+  if (!CMD_CACHE) {
+    try { CMD_CACHE = (await (await api('/api/commands')).json()).commands || []; }
+    catch (e) { CMD_CACHE = []; }
+  }
+  const q = v.slice(1).toLowerCase();
+  const hits = CMD_CACHE.filter(c => c.name.toLowerCase().startsWith(q)).slice(0, 8);
+  if (RUNNING) { menu.hidden = true; return; }
+  menu.innerHTML = '';
+  if (!hits.length) { menu.hidden = true; return; }
+  hits.forEach(c => {
+    const row = el('div', 'cmrow');
+    row.append(el('span', 'cmn', '/' + c.name), el('span', 'cmd', c.description + '（' + c.file + '）'));
+    row.onclick = () => {
+      $('#input').value = '/' + c.name + ' ';
+      menu.hidden = true;
+      $('#input').focus();
+      updateCmdMenu();
+    };
+    menu.append(row);
+  });
+  menu.hidden = false;
+}
 
 // ---------- 会话 ----------
 async function loadHistory() {
@@ -1753,7 +1809,9 @@ async function loadHistory() {
       log.append(w);
     }
 
-    messages.forEach(m => {
+    const PAGE = 50;
+    const older = messages.length > PAGE ? messages.slice(0, messages.length - PAGE) : [];
+    const renderOne = m => {
       if (m.role !== 'user') {
         if (m.thinking) {
           const tb = addThink();
@@ -1770,7 +1828,19 @@ async function loadHistory() {
         });
       }
       addMsg(m.role === 'user' ? 'user' : 'agent', m.content || '', m.images || []);
-    });
+    };
+    messages.slice(-PAGE).forEach(renderOne);
+    if (older.length) {
+      const btn = el('button', 'btn', '加载更早的 ' + older.length + ' 条');
+      btn.style.cssText = 'display:block;margin:0 auto 14px';
+      btn.onclick = () => {
+        const chunk = older.splice(-PAGE);
+        chunk.forEach(renderOne);
+        btn.textContent = older.length ? '还要更早的（剩 ' + older.length + ' 条）' : '';
+        if (!older.length) btn.remove();
+      };
+      log.insertBefore(btn, log.firstChild);
+    }
     if (messages.length) {
       addMsg('notice', messages.length > 1
         ? `这是之前聊的 ${messages.length} 条记录，接着往下说就行。`
@@ -2234,6 +2304,41 @@ async function loadToolLogs() {
   } catch (e) {
     body.append(el('tr')).append(el('td', 'empty', '读取记录失败：' + e.message));
   }
+}
+
+async function loadTemplates() {
+  let d = null;
+  try { d = await (await api('/api/plugins/catalog')).json(); }
+  catch (e) { return; }
+  const ts = d.templates || [];
+  $('#tplGroup').hidden = !ts.length;
+  const box = $('#tplList');
+  box.innerHTML = '';
+  ts.forEach(t => {
+    const row = el('div', 'pmrow');
+    const left = el('span', 'mn', '');
+    left.style.whiteSpace = 'normal';
+    const nm = el('b', null, t.name);
+    nm.style.fontFamily = 'var(--mono)';
+    left.append(nm, el('div', 'dim', (t.description || '') + ' · v' + t.version + ' · ' + t.author));
+    row.append(left);
+    if (t.installed) row.append(el('span', 'pt on', '已安装'));
+    else {
+      const b = el('button', 'btn pri', '一键安装');
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = '安装中…';
+        try {
+          await api('/api/plugins/install_template', {method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: t.name})});
+          loadPlugins();
+        } catch (e) { /* 忽略 */ }
+        loadTemplates();
+      };
+      row.append(b);
+    }
+    box.append(row);
+  });
 }
 
 async function loadPlugins() {
@@ -2879,6 +2984,38 @@ async function loadPresets() {
       bar.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     };
     bar.append(b);
+  });
+}
+
+async function loadBackups() {
+  const box = $('#backupList');
+  box.innerHTML = '';
+  let bs = [];
+  try { bs = (await (await api('/api/backups')).json()).backups || []; }
+  catch (e) { box.append(el('div', 'dim', '读取备份失败：' + e.message)); return; }
+  if (!bs.length) { box.append(el('div', 'dim', '还没有备份（重启一次就会有一份）。')); return; }
+  bs.slice(0, 5).forEach(b => {
+    const row = el('div', 'pmrow');
+    const left = el('span', 'mn', '');
+    left.style.whiteSpace = 'normal';
+    const d = b.name.slice(4, 6) + '月' + b.name.slice(6, 8) + '日 ' +
+              b.name.slice(9, 11) + ':' + b.name.slice(11, 13);
+    left.append(el('b', null, d), el('div', 'dim', b.sessions + ' 个会话'));
+    row.append(left);
+    const btn = el('button', 'btn', '恢复');
+    btn.onclick = async () => {
+      if (!confirm('用 ' + d + ' 的备份覆盖现在的同名会话？')) return;
+      btn.disabled = true;
+      try {
+        await api('/api/backups/restore', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: b.name})});
+        addMsg('notice', '已恢复 ' + b.sessions + ' 个会话，切到对应会话就能看到。');
+      } catch (e) { addMsg('error', '恢复失败：' + e.message); }
+      btn.disabled = false;
+    };
+    row.append(btn);
+    box.append(row);
   });
 }
 

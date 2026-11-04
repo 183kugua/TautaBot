@@ -27,8 +27,9 @@ from agent.core.loop import READONLY, Agent, estimate_tokens
 from agent.core.tools import REGISTRY, is_enabled, schemas, set_disabled, set_scope
 from agent.memory.window import Window
 from agent.core import plugins as plugin_loader
+from agent.core import plugin_templates as ptemplates
 
-VERSION = "0.6.17"
+VERSION = "0.6.19"
 START_TS = time.time()
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -623,6 +624,74 @@ def list_plugins():
 @app.get("/api/commands")
 def list_commands():
     return {"commands": plugin_loader.list_commands()}
+
+
+class BackupRestoreIn(BaseModel):
+    name: str
+
+
+@app.get("/api/backups")
+def list_backups():
+    bdir = DATA_DIR / "backups"
+    out = []
+    if bdir.exists():
+        for p in sorted(bdir.iterdir(), reverse=True):
+            if p.is_dir() and re.match(r"^\d{8}-\d{6}$", p.name):
+                out.append({"name": p.name,
+                            "sessions": len(list(p.glob("*.json"))),
+                            "mtime": int(p.stat().st_mtime)})
+    return {"backups": out}
+
+
+@app.post("/api/backups/restore")
+def restore_backup(body: BackupRestoreIn):
+    """把某次启动备份里的会话文件覆盖回 data/sessions。"""
+    if not re.match(r"^\d{8}-\d{6}$", body.name):
+        raise HTTPException(400, "备份名不合法")
+    src = DATA_DIR / "backups" / body.name
+    if not src.exists():
+        raise HTTPException(404, "这份备份里没有会话数据")
+    dst = DATA_DIR / "sessions"
+    dst.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for f in src.glob("*.json"):
+        shutil.copy2(f, dst / f.name)
+        n += 1
+    _sessions.clear()                      # 缓存清空，下次读盘
+    log.info("backup restored: %s (%d sessions)", body.name, n)
+    return {"ok": True, "restored": n}
+
+
+@app.get("/api/plugins/catalog")
+def plugin_catalog():
+    """内置插件模板清单：一键安装用。"""
+    return {"templates": [
+        {"name": k, "description": v["description"],
+         "version": v["version"], "author": v["author"],
+         "installed": (PLUGINS_DIR / k).exists()}
+        for k, v in ptemplates.TEMPLATES.items()]}
+
+
+class TemplateInstallIn(BaseModel):
+    name: str
+
+
+@app.post("/api/plugins/install_template")
+def install_plugin_template(body: TemplateInstallIn):
+    t = ptemplates.TEMPLATES.get(body.name)
+    if not t:
+        raise HTTPException(404, "没有这个模板")
+    dest = PLUGINS_DIR / t["name"]
+    if dest.exists():
+        raise HTTPException(409, f"{t['name']} 已经装过了（同名目录已存在）")
+    for rel, content in t["files"].items():
+        p = dest / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    log.info("plugin template installed: %s", t["name"])
+    rep = _reload_and_report()
+    rep["name"] = t["name"]
+    return rep
 
 
 class RouteInvokeIn(BaseModel):
